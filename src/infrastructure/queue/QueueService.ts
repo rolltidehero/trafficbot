@@ -62,6 +62,7 @@ export class QueueService {
     this.queue = null;
     this.redisConnection = null;
     const drain = Promise.all(workers.map(worker => worker.close()));
+    let drained = false;
     try {
       try { await deadline(drain, timeoutMs, 'Worker drain'); }
       catch {
@@ -70,8 +71,9 @@ export class QueueService {
         await deadline(cancelActive(), timeoutMs, 'Active session cancellation');
         await deadline(drain, timeoutMs, 'Cancelled worker drain');
       }
+      drained = true;
     } finally {
-      await Promise.allSettled(workers.map(worker => worker.disconnect()));
+      if (!drained) await Promise.allSettled(workers.map(worker => worker.disconnect()));
       // Disconnect shared Redis before awaiting queue closure: queued commands must not hang shutdown.
       connection?.disconnect();
       if (queue) await deadline(queue.close(), 1000, 'Queue close').catch(() => undefined);
