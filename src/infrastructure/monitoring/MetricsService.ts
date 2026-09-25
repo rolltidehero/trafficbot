@@ -8,6 +8,8 @@ export interface TrafficMetrics {
   averageDurationMs: number;
   lastSessionStatus: 'success' | 'failure' | 'none';
   activeSessions: number;
+  lastFailureKind?: 'http' | 'timeout' | 'other';
+  lastNavigation?: { status: number; finalUrl: string };
 }
 
 export class MetricsService {
@@ -37,8 +39,11 @@ export class MetricsService {
     logger.debug('Metric: Session started', { active: this.metrics.activeSessions });
   }
 
-  public trackSessionEnd(success: boolean, durationMs: number): void {
+  public trackSessionEnd(success: boolean, durationMs: number, navigation?: { status: number; finalUrl: string }, failure?: unknown): void {
     this.metrics.activeSessions--;
+    this.metrics.lastNavigation = navigation;
+    const message = failure instanceof Error ? failure.message : '';
+    this.metrics.lastFailureKind = success ? undefined : /HTTP failure/.test(message) ? 'http' : /timeout|timed out/i.test(message) ? 'timeout' : 'other';
     if (success) {
       this.metrics.successfulSessions++;
       this.metrics.lastSessionStatus = 'success';

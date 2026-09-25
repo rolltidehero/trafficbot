@@ -1,38 +1,25 @@
-# Stage 1: Build
-FROM node:18-slim AS builder
-
+FROM node:22-bookworm-slim AS builder
 WORKDIR /app
-
-# Install dependencies for build
-COPY package*.json ./
-# Tell puppeteer to skip browser download during npm install in build stage
-# because we will use the one provided by the base image or install it specifically
-RUN PUPPETEER_SKIP_DOWNLOAD=true npm install
-
-# Copy source and build
-COPY . .
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+COPY package.json package-lock.json .puppeteerrc.cjs ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
 RUN npm run build
 
-# Stage 2: Runtime
-FROM ghcr.io/puppeteer/puppeteer:latest AS runtime
-
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
-
-# Copy built assets
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/useragent ./useragent
-
-# Install production dependencies only
-RUN npm install --omit=dev
-
-# Environment setup
-ENV NODE_ENV=production
-ENV LOG_LEVEL=info
-
-# Healthcheck (Simplified)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('fs').existsSync('./dist/main.js') || process.exit(1)"
-
-# Entrypoint
+ENV NODE_ENV=production PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer PUPPETEER_SKIP_DOWNLOAD=true
+COPY package.json package-lock.json .puppeteerrc.cjs ./
+RUN apt-get update \
+    && npm ci --omit=dev \
+    && ./node_modules/.bin/puppeteer browsers install chrome --install-deps \
+    && chown -R node:node /home/node/.cache /app \
+    && mkdir -p /app/sessions /app/logs \
+    && chown node:node /app/sessions /app/logs
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --chown=node:node useragent ./useragent
+USER node
+HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
+ CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.HEALTH_PORT||3000),r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 ENTRYPOINT ["node", "dist/main.js"]

@@ -1,0 +1,37 @@
+name: Verify
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports: ['16389:6379']
+        options: --health-cmd 'redis-cli ping' --health-interval 2s --health-timeout 1s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check:artifacts
+      - run: npm run build && npm run lint
+      - run: npm test -- --runInBand
+      - run: npm run test:redis
+      # The Docker runtime supplies a supported Chromium sandbox; never disable it for CI.
+      - run: docker build --platform linux/amd64 -t trafficbot:ci .
+      - run: |
+          docker run --rm --init --cap-add=SYS_ADMIN --network=host --user root \
+            -v "$PWD:/tests" --entrypoint sh trafficbot:ci -c '
+              cp -R /tests /verification && chown -R node:node /verification
+              cd /verification
+              su node -s /bin/sh -c "npm run test:browser && npm run test:lifecycle"
+            '
+      - run: npm audit --omit=dev --json > audit-runtime.json
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-dependency-audit
+          path: audit-runtime.json

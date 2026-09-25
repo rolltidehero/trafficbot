@@ -1,37 +1,51 @@
-version: '3.8'
-
 services:
   traffic-bot:
     build: .
+    # Chrome for Testing is provided for Linux amd64.
+    platform: linux/amd64
+    init: true
+    cap_add: [SYS_ADMIN]
+    shm_size: 1gb
+    env_file:
+      - path: .env
+        required: false
     environment:
-      - NODE_ENV=production
-      - LOG_LEVEL=info
-      - DEFAULT_URL=${DEFAULT_URL:-https://lucasveneno.com/}
-      - MAX_SESSIONS=${MAX_SESSIONS:-5}
-      - REDIS_URL=redis://redis:6379
-      - PROXY_URL=tor-proxy
-      - PROXY_PORT=8118
-      - PROXY_USER=admin
-      - PROXY_PASS=admin
+      NODE_ENV: production
+      BOT_ROLE: ${BOT_ROLE:-both}
+      DEFAULT_URL: ${DEFAULT_URL:-http://127.0.0.1:8080/}
+      REDIS_URL: redis://redis:6379
+      SESSIONS_DATA_DIR: /app/sessions
+      LOCAL_FALLBACK: 'false'
+    volumes:
+      - sessions:/app/sessions
+      - logs:/app/logs
     depends_on:
-      - tor-proxy
-      - redis
-    restart: always
-
+      redis:
+        condition: service_healthy
+    restart: 'no'
+    stop_grace_period: 40s
   redis:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
-    restart: always
-
+    image: redis:7.4-alpine
+    command: [redis-server, --appendonly, 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+    restart: unless-stopped
+  # Optional Tor proxy: explicit config; no management listener or credentials.
   tor-proxy:
-    image: zeta0/alpine-tor:latest
-    ports:
-      - "8118:8118"
-      - "2090:2090"
-    environment:
-      - tors=25
-      - privoxy=1
-      - haproxy_login=admin
-      - haproxy_pass=admin
-    restart: always
+    profiles: [tor]
+    build:
+      context: .
+      dockerfile: docker/tor/Dockerfile
+    volumes:
+      - tor-data:/var/lib/tor
+    restart: unless-stopped
+volumes:
+  sessions:
+  logs:
+  redis-data:
+  tor-data:

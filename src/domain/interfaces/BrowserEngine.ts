@@ -1,4 +1,7 @@
 export interface BrowserOptions {
+  allowedOrigin?: string;
+  searchOrigins?: string[];
+  navigationTimeoutMs?: number;
   headless?: boolean | 'new';
   userAgent?: string;
   userDataDir?: string;
@@ -18,6 +21,7 @@ export interface BrowserOptions {
 export interface BrowserEngine {
   init(options: BrowserOptions): Promise<void>;
   navigate(url: string): Promise<void>;
+  navigationResult(allowFailure?: boolean): { status: number; finalUrl: string };
   wait(ms: number): Promise<void>;
   evaluate<T>(fn: (...args: any[]) => T, ...args: any[]): Promise<T>;
   scroll(deltaX: number, deltaY: number): Promise<void>;

@@ -1,22 +1,40 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Browser, Page } from 'puppeteer';
+import { Browser, Page, LaunchOptions } from 'puppeteer';
 import { BrowserEngine, BrowserOptions } from '../../domain/interfaces/BrowserEngine';
+import { sameOrigin } from '../../domain/entities/SessionContract';
 import { logger } from '../logging/logger';
 
 puppeteer.use(StealthPlugin());
 
 export class PuppeteerStealthEngine implements BrowserEngine {
   private browser: Browser | null = null;
+  private closing?: Promise<void>;
+  private launching?: Promise<Browser>;
+  private cancelled = false;
   private page: Page | null = null;
 
+  private allowedOrigin?: string;
+  private searchOrigins: string[] = [];
+  private scopeError?: Error;
+  private lastResponse?: { status: number; finalUrl: string };
+  private navigationTimeoutMs = 60000;
+  private waits = new Map<NodeJS.Timeout, () => void>();
+
+  navigationResult(allowFailure = false): { status: number; finalUrl: string } {
+    if (!allowFailure && this.scopeError) throw this.scopeError;
+    if (!this.lastResponse) throw new Error('No navigation response');
+    if (!allowFailure && this.allowedOrigin && !sameOrigin(this.lastResponse.finalUrl, this.allowedOrigin)) throw new Error('Session did not reach configured origin');
+    if (!allowFailure && this.lastResponse.status >= 400) throw new Error(`HTTP failure: ${this.lastResponse.status}`);
+    return this.lastResponse;
+  }
+
   async init(options: BrowserOptions): Promise<void> {
+    this.closing = undefined;
+    this.cancelled = false;
     const args = [
-      '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
       '--window-position=0,0',
       '--no-first-run',
-      '--no-zygote',
       '--disable-blink-features=AutomationControlled',
       '--disable-infobars',
       '--hide-scrollbars',
@@ -24,21 +42,12 @@ export class PuppeteerStealthEngine implements BrowserEngine {
       '--no-default-browser-check',
     ];
 
-    // On Linux and Windows, we usually need the sandbox flags or to disable them for stability
-    if (process.platform === 'linux' || process.platform === 'win32') {
-      args.push('--no-sandbox');
-      args.push('--disable-setuid-sandbox');
-      args.push('--disable-dev-shm-usage');
-      args.push('--disable-accelerated-2d-canvas');
-      args.push('--disable-gpu');
-    }
-
     if (options.proxy) {
       args.push(`--proxy-server=${options.proxy.server}`);
     }
 
-    const launchOptions: any = {
-      headless: options.headless === false ? false : 'new',
+    const launchOptions: LaunchOptions = {
+      headless: options.headless !== false,
       args,
       ignoreDefaultArgs: ['--enable-automation'],
       defaultViewport: options.viewport || { width: 1280, height: 720 },
@@ -48,9 +57,37 @@ export class PuppeteerStealthEngine implements BrowserEngine {
       launchOptions.userDataDir = options.userDataDir;
     }
 
-    this.browser = await (puppeteer as any).launch(launchOptions);
+    this.launching = puppeteer.launch(launchOptions);
+    this.browser = await this.launching;
+    if (this.cancelled) { await this.close(); throw new Error('Session cancelled during launch'); }
     const pages = await this.browser!.pages();
     this.page = pages.length > 0 ? pages[0] : await this.browser!.newPage();
+
+    this.allowedOrigin = options.allowedOrigin;
+    this.searchOrigins = options.searchOrigins || [];
+    this.navigationTimeoutMs = options.navigationTimeoutMs || 60000;
+    this.scopeError = undefined;
+    this.lastResponse = undefined;
+    await this.page.setRequestInterception(true);
+    this.page.on('request', request => {
+      if (request.isNavigationRequest() && request.frame() === this.page?.mainFrame()) {
+        const url = request.url();
+        if (this.allowedOrigin && !sameOrigin(url, this.allowedOrigin) && !this.searchOrigins.some(origin => sameOrigin(url, origin))) {
+          this.scopeError = new Error('Navigation blocked: destination outside configured origin');
+          void request.abort().catch(() => undefined);
+          return;
+        }
+        if (this.allowedOrigin && sameOrigin(url, this.allowedOrigin)) this.searchOrigins = [];
+      }
+      void request.continue().catch(() => undefined);
+    });
+    this.page.on('response', response => {
+      if (response.request().isNavigationRequest() && response.frame() === this.page?.mainFrame()) {
+        this.lastResponse = { status: response.status(), finalUrl: response.url() };
+      }
+    });
+    // Popups are outside the session's controlled navigation path.
+    this.page.on('popup', page => { void page?.close(); });
 
     if (options.userAgent) {
       await this.page.setUserAgent(options.userAgent);
@@ -82,7 +119,7 @@ export class PuppeteerStealthEngine implements BrowserEngine {
       });
     }
 
-    await this.page.evaluateOnNewDocument(options.fingerprintScript!);
+    if (options.fingerprintScript) await this.page.evaluateOnNewDocument(options.fingerprintScript);
 
     logger.debug('Puppeteer Stealth initialized with advanced fingerprint', { 
       userAgent: options.userAgent,
@@ -92,12 +129,18 @@ export class PuppeteerStealthEngine implements BrowserEngine {
 
   async navigate(url: string): Promise<void> {
     if (!this.page) throw new Error('Engine not initialized');
-    await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+    const response = await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: this.navigationTimeoutMs });
+    if (this.scopeError) throw this.scopeError;
+    if (!response) throw new Error('Missing navigation response');
+    if (response.status() >= 400) throw new Error(`HTTP failure: ${response.status()}`);
   }
 
   async wait(ms: number): Promise<void> {
     if (!this.page) throw new Error('Engine not initialized');
-    await new Promise(resolve => setTimeout(resolve, ms));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { this.waits.delete(timer); resolve(); }, ms);
+      this.waits.set(timer, () => { clearTimeout(timer); reject(new Error('Session cancelled')); });
+    });
   }
 
   async evaluate<T>(fn: (...args: any[]) => T, ...args: any[]): Promise<T> {
@@ -121,9 +164,20 @@ export class PuppeteerStealthEngine implements BrowserEngine {
   }
 
   async close(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close();
-    }
+    if (this.closing) return this.closing;
+    this.cancelled = true;
+    for (const cancel of this.waits.values()) cancel();
+    this.waits.clear();
+    this.closing = (async () => {
+      const browser = this.browser || await this.launching?.catch(() => undefined);
+      this.browser = null;
+      this.page = null;
+      if (browser) {
+        try { await browser.close(); }
+        catch (error) { browser.process()?.kill('SIGKILL'); throw error; }
+      }
+    })();
+    return this.closing;
   }
 
   async setExtraHeaders(headers: Record<string, string>): Promise<void> {

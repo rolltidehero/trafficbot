@@ -1,0 +1,12 @@
+node_modules
+sessions
+dist
+logs
+*.log
+.env
+.env.*
+!.env.example
+.git
+.DS_Store
+coverage
+*.png

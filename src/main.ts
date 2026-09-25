@@ -1,134 +1,90 @@
+import { createServer } from 'http';
 import { TrafficOrchestrator } from './application/traffic/TrafficOrchestrator';
 import { PuppeteerStealthEngine } from './infrastructure/browser/PuppeteerStealthEngine';
-import { Session } from './domain/entities/Session';
 import { Config } from './infrastructure/config/config';
 import { logger } from './infrastructure/logging/logger';
 import { MetricsService } from './infrastructure/monitoring/MetricsService';
-import { QueueService, TrafficJobData } from './infrastructure/queue/QueueService';
-import { Job } from 'bullmq';
+import { QueueService } from './infrastructure/queue/QueueService';
+import { TrafficJobData } from './domain/entities/SessionContract';
+import { makeJob } from './infrastructure/config/session';
+import { deadline } from './infrastructure/lifecycle/deadline';
 
-async function setupMonitoring() {
-  const metrics = MetricsService.getInstance();
-  setInterval(() => {
-    metrics.printSummary();
-  }, 10000);
-  return metrics;
-}
-
-async function runProducer() {
-  logger.info('Role: PRODUCER - Adding initial tasks to queue', { 
-    count: Config.MAX_SESSIONS,
-    url: Config.DEFAULT_URL 
-  });
-
-  for (let i = 0; i < Config.MAX_SESSIONS; i++) {
-    const durationMin = Config.SESSION_TIME === 'random' 
-      ? Math.floor(Math.random() * (5 - 1 + 1) + 1) 
-      : parseInt(Config.SESSION_TIME);
-
-    const jobData: TrafficJobData = {
-      url: Config.DEFAULT_URL,
-      durationMinutes: durationMin,
-      intensity: Config.BEHAVIOR_INTENSITY,
-      proxy: Config.PROXY_URL ? {
-        host: Config.PROXY_URL,
-        port: Config.PROXY_PORT!,
-        username: Config.PROXY_USER,
-        password: Config.PROXY_PASS
-      } : undefined
-    };
-
-    await QueueService.addSession(jobData);
-  }
-}
-
-async function runWorker() {
-  logger.info('Role: WORKER - Listening for tasks...', {
-    concurrency: Config.MAX_SESSIONS
-  });
-
-  QueueService.createWorker(async (job: Job<TrafficJobData>) => {
-    logger.info('Worker: Starting job', { jobId: job.id, url: job.data.url });
-    const engine = new PuppeteerStealthEngine();
-    const orchestrator = new TrafficOrchestrator(engine);
-    
-    try {
-      await orchestrator.runFromJob(job.id!, job.data);
-    } catch (err) {
-      logger.error('Worker: Job target failed', { jobId: job.id, error: err });
-      throw err; // Allow BullMQ to handle retry
-    }
-  });
-}
-
-async function bootstrap() {
-  logger.info('Initializing Veneno Traffic Bot v2 (Distributed)', { 
-    env: Config.NODE_ENV,
-    role: Config.BOT_ROLE,
-    redis: Config.REDIS_URL
-  });
-
-  // Initialize Queue
-  QueueService.initialize(Config.REDIS_URL);
-  
-  // Start Monitoring (only locally relevant if worker/both)
-  if (Config.BOT_ROLE !== 'producer') {
-    await setupMonitoring();
-  }
-
-  // Execute Roles
-  if (Config.BOT_ROLE === 'producer' || Config.BOT_ROLE === 'both') {
-    if (QueueService.isDistributedEnabled()) {
-      await runProducer();
-    } else if (Config.BOT_ROLE === 'both') {
-      logger.info('Role: BOTH - Redis unavailable, falling back to local sequential execution');
-      const engine = new PuppeteerStealthEngine();
-      const orchestrator = new TrafficOrchestrator(engine);
-
-      const { FingerprintService } = require('./infrastructure/browser/FingerprintService');
-      
-      for (let i = 0; i < Config.MAX_SESSIONS; i++) {
-        const fingerprint = FingerprintService.generate();
-        await orchestrator.run(new Session({
-          id: `local-${i}`,
-          url: Config.DEFAULT_URL,
-          userAgent: fingerprint.userAgent,
-          viewport: fingerprint.viewport,
-          durationMs: (Config.SESSION_TIME === 'random' ? 3 : parseInt(Config.SESSION_TIME)) * 60000,
-          proxy: Config.PROXY_URL ? {
-            server: `${Config.PROXY_URL}:${Config.PROXY_PORT}`,
-            username: Config.PROXY_USER,
-            password: Config.PROXY_PASS
-          } : undefined,
-          userDataDir: Config.PERSISTENT_SESSIONS ? `${Config.SESSIONS_DATA_DIR}/session-${i}` : undefined
-        }), {
-          headless: Config.HEADLESS,
-          platform: fingerprint.platform,
-          fingerprintScript: FingerprintService.getInjectionScript(fingerprint)
-        });
-      }
-    } else {
-      logger.error('Role: PRODUCER - Redis unavailable, cannot add tasks.');
-    }
-  }
-
-  if (Config.BOT_ROLE === 'worker' || Config.BOT_ROLE === 'both') {
-    if (QueueService.isDistributedEnabled()) {
-      await runWorker();
-    } else if (Config.BOT_ROLE === 'worker') {
-      logger.error('Role: WORKER - Redis unavailable, cannot listen for tasks.');
-    }
-  }
-
-  // Graceful shutdown
-  process.on('SIGTERM', async () => {
-    logger.info('SIGTERM received, closing services...');
-    await QueueService.close();
-    process.exit(0);
-  });
-}
-
-bootstrap().catch(err => {
-  logger.error('Fatal crash during bootstrap', { err });
-  process.exit(1);
+const engines = new Set<PuppeteerStealthEngine>();
+let stopping = false;
+let started = false;
+let distributed = false;
+let monitor: NodeJS.Timeout | undefined;
+let shutdownPromise: Promise<void> | undefined;
+const health = createServer((_request, response) => {
+  const ready = started && !stopping && (!distributed || QueueService.isDistributedEnabled());
+  response.writeHead(ready ? 200 : 503).end(ready ? `ready:${Config.BOT_ROLE}` : 'not ready');
 });
+
+function shutdown(code = 0): Promise<void> {
+  if (shutdownPromise) return shutdownPromise;
+  stopping = true;
+  process.exitCode = code;
+  if (monitor) clearInterval(monitor);
+  health.close();
+  shutdownPromise = (async () => {
+    const forced = setTimeout(() => {
+      logger.error('Shutdown deadline exceeded; unfinished jobs will be recovered by Redis');
+      process.exit(1);
+    }, Config.SHUTDOWN_TIMEOUT_MS);
+    let complete = false;
+    try {
+      // First stop accepting work and drain. On expiry cancel browser waits and navigations.
+      await QueueService.close(Math.floor(Config.SHUTDOWN_TIMEOUT_MS / 2), () => Promise.allSettled([...engines].map(engine => engine.close())));
+      await deadline(Promise.allSettled([...engines].map(engine => engine.close())), Math.floor(Config.SHUTDOWN_TIMEOUT_MS / 3), 'Browser shutdown');
+      complete = true;
+    } catch { process.exitCode = 1; }
+    finally { if (complete) clearTimeout(forced); }
+  })();
+  return shutdownPromise;
+}
+process.once('SIGTERM', () => { void shutdown(); });
+process.once('SIGINT', () => { void shutdown(); });
+
+async function execute(id: string, data: TrafficJobData): Promise<void> {
+  if (stopping) throw new Error('Shutdown in progress');
+  const engine = new PuppeteerStealthEngine();
+  engines.add(engine);
+  try { await new TrafficOrchestrator(engine).runFromJob(id, data); }
+  finally { engines.delete(engine); }
+}
+async function bootstrap(): Promise<void> {
+  health.on('error', () => { logger.error('Health server failed'); void shutdown(1); });
+  await new Promise<void>((resolve, reject) => {
+    health.once('error', reject);
+    health.listen(Config.HEALTH_PORT, '127.0.0.1', resolve);
+  });
+  if (Config.BOT_ROLE !== 'local') {
+    try {
+      await QueueService.initialize(Config.REDIS_URL, Config.REDIS_READY_TIMEOUT_MS);
+      distributed = true;
+    } catch (error) {
+      if (Config.BOT_ROLE !== 'both' || !Config.LOCAL_FALLBACK) throw error;
+      logger.warn('Explicit startup fallback selected: running a finite local batch');
+    }
+  }
+  if (stopping) { await QueueService.close(1000); return; }
+  monitor = setInterval(() => MetricsService.getInstance().printSummary(), 10000);
+  if (distributed && Config.BOT_ROLE !== 'producer') {
+    await QueueService.createWorker(job => execute(job.id!, job.data), Config.MAX_SESSIONS);
+  }
+  started = true;
+  if (Config.BOT_ROLE !== 'worker') {
+    for (let index = 0; index < Config.MAX_SESSIONS && !stopping; index++) {
+      const data = makeJob(Config, index);
+      if (distributed) await QueueService.addSession(data);
+      else await execute(`local-${index}`, data);
+    }
+  }
+  if (!distributed || Config.BOT_ROLE === 'producer') await shutdown();
+}
+if (require.main === module) {
+  void bootstrap().catch(() => {
+    logger.error('Execution failed: check configuration, Redis readiness, or session failure logs');
+    void shutdown(1);
+  });
+}

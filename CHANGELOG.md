@@ -1,3 +1,15 @@
+## Unreleased — 2026-09-25
+
+- Separate reproducible package installation from browser provisioning; run Docker as an unprivileged user with writable volumes and role readiness.
+- Await bounded Redis readiness, preserve reconnection, validate queue payloads, retain failed jobs, and propagate session errors after cleanup.
+- Share session settings across modes; resolve random duration once and lock persistent profiles against concurrent writers.
+- Restore browser sandbox/web security/site isolation; enforce exact-origin navigation and inspect HTTP responses.
+- Handle SIGINT/SIGTERM, bounded worker drain/cancellation, finite local/producer exit, and single-count metrics.
+- Remove infrastructure host ports and default credentials; configure optional Tor explicitly without management listeners.
+- Make host IP telemetry opt-in, bounded, cached, and correctly labeled; reject unsupported proxy geolocation matching.
+- Untrack generated dependencies/profiles without deleting local data, retain lockfile, and add artifact and CI verification gates.
+- Update compatible dependencies; add ESLint and production-schema, Redis, lifecycle, browser, telemetry, and profile-lock regression tests.
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

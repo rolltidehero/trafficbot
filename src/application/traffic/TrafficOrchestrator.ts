@@ -4,6 +4,8 @@ import { logger } from '../../infrastructure/logging/logger';
 import { Config } from '../../infrastructure/config/config';
 import { BehaviorService } from '../../infrastructure/browser/BehaviorService';
 import { MetricsService } from '../../infrastructure/monitoring/MetricsService';
+import { sessionJobSchema, proxyServer } from '../../domain/entities/SessionContract';
+import { acquireProfile } from '../../infrastructure/browser/ProfileLease';
 import { ReputationService } from '../../infrastructure/monitoring/ReputationService';
 
 export class TrafficOrchestrator {
@@ -27,12 +29,15 @@ export class TrafficOrchestrator {
       targetDurationMs: config.durationMs 
     });
 
+    let failed = false;
+    let failure: unknown;
+    let outcome: { status: number; finalUrl: string } | undefined;
+    MetricsService.getInstance().trackSessionStart();
     try {
-      const metrics = MetricsService.getInstance();
-      metrics.trackSessionStart();
+
 
       // Check Proxy Reputation (Optional/Async)
-      ReputationService.checkIP(config.proxy?.server).catch((e: Error) => logger.debug('IP check deferred', { e }));
+      ReputationService.checkIP(Config.EXTERNAL_IP_CHECK, config.proxy?.server).catch((e: Error) => logger.debug('IP check deferred', { e }));
 
       const { ReferrerService } = require('../../infrastructure/browser/ReferrerService');
       const referrerService = new ReferrerService(logger);
@@ -44,26 +49,10 @@ export class TrafficOrchestrator {
         userDataDir: config.userDataDir,
         headless: options.headless,
         platform: options.platform,
-        fingerprintScript: options.fingerprintScript
+        fingerprintScript: options.fingerprintScript,
+        allowedOrigin: new URL(config.url).origin,
+        searchOrigins: Config.ORGANIC_SEARCH ? ['https://www.google.com', 'https://www.bing.com', 'https://duckduckgo.com'] : []
       });
-
-      // 1. Geolocation Matching
-      if (Config.MATCH_GEOLOCATION && config.proxy) {
-        try {
-          // Fetch simple geo info from the proxy context (this assumes the bot can reach an external API)
-          // In a real scenario, we might want to cache this or use a static lookup
-          const response = await fetch('http://ip-api.com/json');
-          if (response.ok) {
-            const data: any = await response.json();
-            if (data.lat && data.lon) {
-              logger.info('Setting Geolocation to match Proxy', { lat: data.lat, lon: data.lon, city: data.city });
-              await this.engine.setGeolocation(data.lat, data.lon);
-            }
-          }
-        } catch (e) {
-          logger.debug('Geolocation matching failed, using browser default', { e });
-        }
-      }
 
       // 2. Organic Search or Referrer Spoofing
       if (Config.ORGANIC_SEARCH && Config.SEARCH_KEYWORDS.length > 0) {
@@ -177,7 +166,7 @@ export class TrafficOrchestrator {
             await BehaviorService.simulateRandomAction(
               this.engine, 
               config.viewport, 
-              { intensity: Config.BEHAVIOR_INTENSITY }
+              { intensity: config.intensity || Config.BEHAVIOR_INTENSITY }
             );
           }
         } else {
@@ -194,16 +183,11 @@ export class TrafficOrchestrator {
         await this.engine.wait(remainingTime);
       }
       
-      const actualDuration = Date.now() - startTime;
-      metrics.trackSessionEnd(true, actualDuration);
-      logger.info('Session completed successfully', { 
-        id: config.id, 
-        actualDurationMs: actualDuration,
-        targetDurationMs: config.durationMs
-      });
-    } catch (error: any) {
-      const actualDuration = Date.now() - startTime;
-      MetricsService.getInstance().trackSessionEnd(false, actualDuration);
+      outcome = this.engine.navigationResult();
+    } catch (error: unknown) {
+      failed = true;
+      failure = error;
+      try { outcome = this.engine.navigationResult(true); } catch { /* No response before launch/navigation failure. */ }
       logger.error('Session execution failed', { 
         id: config.id, 
         error: error instanceof Error ? {
@@ -213,14 +197,24 @@ export class TrafficOrchestrator {
         } : (typeof error === 'object' ? JSON.stringify(error) : String(error))
       });
     } finally {
-      await this.engine.close();
+      try { await this.engine.close(); } catch (cleanupError) {
+        logger.warn('Browser cleanup failed');
+        if (!failed) { failed = true; failure = cleanupError; }
+      } finally {
+        MetricsService.getInstance().trackSessionEnd(!failed, Date.now() - startTime, outcome, failure);
+      }
     }
+    if (failed) throw failure;
+    logger.info('Session completed successfully', { id: config.id, actualDurationMs: Date.now() - startTime, ...outcome });
   }
 
   /**
    * Helper to run a session from a simplified Job Data structure
    */
-  async runFromJob(jobId: string, data: any): Promise<void> {
+  async runFromJob(jobId: string, payload: unknown): Promise<void> {
+    const data = sessionJobSchema.parse(payload);
+    const lease = data.persistent ? await acquireProfile(Config.SESSIONS_DATA_DIR, data.profileKey!) : undefined;
+    try {
     const { FingerprintService } = require('../../infrastructure/browser/FingerprintService');
     const fingerprint = FingerprintService.generate();
     
@@ -230,8 +224,10 @@ export class TrafficOrchestrator {
       userAgent: fingerprint.userAgent,
       viewport: fingerprint.viewport,
       durationMs: data.durationMinutes * 60000,
+      intensity: data.intensity,
+      userDataDir: lease?.path,
       proxy: data.proxy ? {
-        server: `${data.proxy.host}:${data.proxy.port}`,
+        server: proxyServer(data.proxy),
         username: data.proxy.username,
         password: data.proxy.password
       } : undefined
@@ -242,6 +238,7 @@ export class TrafficOrchestrator {
       platform: fingerprint.platform,
       fingerprintScript: FingerprintService.getInjectionScript(fingerprint)
     });
+    } finally { await lease?.release().catch(() => logger.warn('Profile lock release failed')); }
   }
 
   private async performContextualClick(): Promise<void> {
@@ -252,7 +249,7 @@ export class TrafficOrchestrator {
       const links = Array.from(document.querySelectorAll("a"))
         .filter(a => {
           const href = a.href;
-          return href && !blacklist.some((b: string) => href.includes(b)) && href.startsWith(window.location.origin);
+          return href && !blacklist.some((b: string) => href.includes(b)) && new URL(href).origin === window.location.origin;
         })
         .map(a => {
           const text = (a.innerText || a.title || "").toLowerCase().trim();
@@ -277,7 +274,6 @@ export class TrafficOrchestrator {
       for (const link of links) {
         rand -= link.score;
         if (rand <= 0) {
-          window.location.href = link.href;
           return { href: link.href, text: link.text };
         }
       }
@@ -285,6 +281,7 @@ export class TrafficOrchestrator {
     }, this.blacklist);
 
     if (clickResult) {
+      await this.engine.navigate(clickResult.href);
       logger.info(`Contextual click performed: "${clickResult.text}" -> ${clickResult.href}`);
     } else {
       logger.debug('No suitable links found for contextual click.');

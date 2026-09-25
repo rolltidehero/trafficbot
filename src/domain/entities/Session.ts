@@ -10,6 +10,7 @@ export interface SessionConfig {
     password?: string;
   };
   durationMs: number;
+  intensity?: 'low' | 'medium' | 'high';
 }
 
 export class Session {

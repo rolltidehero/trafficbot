@@ -28,7 +28,7 @@ export class FingerprintService {
     const hostPlatform = process.platform; // 'darwin', 'win32', 'linux'
     
     // 2. Get random UA matching the host platform (or random if not matched)
-    const { ua, platform: uaPlatform } = UserAgentService.getRandomUA('most-common', hostPlatform);
+    const { ua, platform: _uaPlatform } = UserAgentService.getRandomUA('most-common', hostPlatform);
     
     // 3. Resolve navigator.platform based on UA
     let navPlatform = 'Win32';

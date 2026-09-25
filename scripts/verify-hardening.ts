@@ -9,7 +9,7 @@ async function verifyHardening() {
   
   const browser = await puppeteer.launch({ 
     headless: true,
-    args: ['--no-sandbox']
+    args: []
   });
   
   const page = await browser.newPage();
