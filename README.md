@@ -4,56 +4,66 @@ Enterprise-grade stealth traffic generation framework.
 
 ## Quick Start (Docker)
 
-1. Clone the repository.
-2. Configure `.env` (use `.env.example` as template).
-3. Run with Docker Compose:
+Requires Docker with Compose support for optional `env_file` entries. Browser installation and system libraries are handled inside the image; you do not need to run `setup:linux` on the Docker host.
+
+1. Clone the repository and enter its directory.
+2. Copy `.env.example` to `.env` if you do not already have a configuration file.
+3. Set `DEFAULT_URL` to an HTTP(S) target you control that is reachable from the container. The default `http://127.0.0.1:8080/` is a placeholder; no target web server is included. Container loopback refers to the container itself. Remove any conflicting `URL` setting, since that alias takes precedence over `DEFAULT_URL`.
+4. Start the bot and Redis:
+
    ```bash
    docker compose up --build
    ```
+
+The default `BOT_ROLE=both` enqueues one batch and keeps a worker running. No proxy is enabled by default. Stop the services with `docker compose down`; named volumes retain profiles, logs, and Redis data. Keep `HEADLESS=true` in the supplied container, which does not configure a graphical display.
+
+## Manual Setup
+
+Requires Node.js 22 or later and a supported Chrome environment. Run these commands from the repository directory:
+
+```bash
+npm ci
+npm run download-browsers
+npm run build
+```
+
+Copy `.env.example` to `.env` if needed, set your target URL, and choose an execution role. For a finite local batch without Redis:
+
+```env
+BOT_ROLE=local
+DEFAULT_URL=http://127.0.0.1:8080/
+MAX_SESSIONS=1
+```
+
+Start your own target server at that address, or replace it with your reachable target, then run:
+
+```bash
+npm start
+```
+
+For `producer`, `worker`, or `both`, start Redis separately and set `REDIS_URL`. Those roles require Redis unless `both` explicitly enables startup fallback. Package installation does not provision a browser; `download-browsers` installs the Chrome revision expected by the lockfile. Chromium sandbox, web security, and site isolation remain enabled.
+
+On a Debian/Ubuntu host missing Chrome system libraries, the provided setup script installs them with elevated privileges:
 
 ```bash
 sudo npm run setup:linux
 ```
 
-### Windows Setup (CMD/PowerShell)
+### Windows Setup
 
-If running on Windows:
+Run installation, browser provisioning, and build commands above before `npm start`. Configure `.env` rather than using POSIX-style inline environment assignments. Ensure `SESSIONS_DATA_DIR` points to a writable directory. The interactive example script and dedicated integration-test npm scripts use POSIX shell syntax; run them in a compatible environment such as Git Bash or WSL.
 
-1. Ensure **Chrome for Testing** is installed: `npm run download-browsers`.
-2. The bot uses `path.join` for cross-platform file paths.
-3. If using persistent sessions, ensure the `SESSIONS_DATA_DIR` path is valid for Windows.
-4. To run examples on Windows, use **Git Bash** (recommended) or manually set environment variables in CMD:
-   ```cmd
-   set NODE_ENV=production&& set MAX_SESSIONS=1&& npm start
-   ```
-
-## Manual Setup
-
-1. Install dependencies:
-   ```bash
-   npm ci
-   npm run download-browsers
-   ```
-2. Build the project:
-   ```bash
-   npm run build
-   ```
-3. Run in Production:
-   ```bash
-   npm start
-   ```
-
-To see the bot in action with different pre-set configurations (High Concurrency, Targeted URLs, Human Behavior Simulation, etc.), run the interactive example script:
+### Interactive examples
 
 ```bash
-npm run run:examples # Choice 7 for Behavior Simulation
+npm run run:examples
 ```
 
-_Requires Node.js 22 or later. Package installation does not provision a browser; `download-browsers` installs the exact Chrome revision expected by the lockfile. Chromium sandbox, web security, and site isolation remain enabled._
+The legacy examples select distributed roles and therefore need Redis. Some select external targets or search engines; inspect their settings before running them. Use the explicit `BOT_ROLE=local` configuration above for a finite local batch without Redis.
 
 ## Browser Seeding & Visibility
 
-"Seeding" allows the bot to maintain a persistent reputation by saving cookies and cache across runs.
+Persistent profiles retain browser state, including cookies and cache, across runs. They do not guarantee reputation, anonymity, or detection avoidance.
 
 ### 1. Seeding (Persistent Profiles)
 
@@ -88,15 +98,33 @@ If you encounter "crash info version 7" or "browser launch failed" on macOS:
 
 ## Proxy Configuration
 
-The bot supports HTTP/SOCKS proxies for anonymity.
+The bot supports HTTP, HTTPS, and SOCKS5 browser proxies. Set `PROXY_URL` to a host, optionally prefixed with its scheme, and put the port separately in `PROXY_PORT` (1–65535). Do not embed credentials, a port, or a path in `PROXY_URL`. HTTP(S) authentication requires both `PROXY_USER` and `PROXY_PASS`; authenticated SOCKS5 is unsupported.
 
-### 1. Using Tor (Docker - Recommended)
+### 1. Optional Tor proxy (Docker)
 
-The `docker compose.yml` includes a built-in Tor proxy pool. When running with Docker, the bot is automatically configured to use Tor with rotating IPs.
+`docker-compose.yml` provides a single optional SOCKS5 proxy, not an automatically rotating proxy pool. Add these settings to `.env`:
+
+```env
+PROXY_URL=socks5://tor-proxy
+PROXY_PORT=9050
+PROXY_USER=
+PROXY_PASS=
+```
+
+Start Tor first and inspect its logs for completed bootstrap:
 
 ```bash
-docker compose up
+docker compose --profile tor up -d --build tor-proxy
+docker compose logs -f tor-proxy
 ```
+
+Once bootstrap completes, leave the log view and start the bot:
+
+```bash
+docker compose --profile tor up --build traffic-bot
+```
+
+Compose waits for Redis health but does not wait for Tor circuit readiness. The proxy has no published host ports, management listener, or default credentials. Stop this optional service with `docker compose --profile tor down`.
 
 ### 2. Using Local Tor (macOS - Manual Setup)
 
@@ -122,7 +150,7 @@ _Note: The bot supports SOCKS5 natively. Ensure you use the `socks5://` prefix._
 
 The project includes a comprehensive test suite using Jest.
 
-1. **Run All Tests:**
+1. **Run Unit Tests (integration suites are explicitly skipped):**
 
    ```bash
    npm test
@@ -139,7 +167,7 @@ The project includes a comprehensive test suite using Jest.
    npm run test:browser
    ```
 
-_Note: Integration tests satisfy system-level dependencies for running a real browser. If you encounter issues on Linux, ensure you've run `sudo npm run setup:linux` first._
+_Browser integration tests require an installed browser and its system libraries; they do not install these dependencies. See the complete verification commands below for Redis and process-lifecycle tests._
 
 ## Configuration (.env)
 
@@ -147,7 +175,7 @@ _Note: Integration tests satisfy system-level dependencies for running a real br
 | --------------------- | -------------------------- | -------------------------------------------------- |
 | `DEFAULT_URL`         | `http://127.0.0.1:8080/` | Initial target URL.                                |
 | `MAX_SESSIONS`        | `1`                        | Batch size for producers; worker concurrency; local batch size.              |
-| `SESSION_TIME`        | `3`                        | Duration per session in minutes (or `random`).     |
+| `SESSION_TIME`        | `3`                        | Finite positive minutes, including fractions; `random` selects 1–5 whole minutes.     |
 | `HEADLESS`            | `true`                     | Run without visible browser.                       |
 | `HUMAN_BEHAVIOR`      | `true`                     | Enable mouse movement and scrolling simulation.    |
 | `BEHAVIOR_INTENSITY`  | `medium`                   | Interaction frequency (`low`, `medium`, `high`).   |
@@ -157,6 +185,11 @@ _Note: Integration tests satisfy system-level dependencies for running a real br
 | `PROXY_PORT`          | -                          | Proxy server port (e.g., `9050`).                  |
 | `BOT_ROLE`            | `both`                     | Execution role (`local`, `producer`, `worker`, `both`).     |
 | `REDIS_URL`           | `redis://127.0.0.1:6379`   | Redis connection URL for distributed queue.        |
+| `LOCAL_FALLBACK` | `false` | Allow only `both` to run locally if Redis is unavailable at startup; forced off by Compose. |
+| `REDIS_READY_TIMEOUT_MS` | `15000` | Redis startup and queue-operation deadline in milliseconds. |
+| `SHUTDOWN_TIMEOUT_MS` | `30000` | Overall graceful-shutdown deadline in milliseconds. |
+| `HEALTH_PORT` | `3000` | Loopback readiness HTTP port; use distinct ports for multiple host processes. |
+| `EXTERNAL_IP_CHECK` | `false` | Opt into direct host IP/country telemetry; skipped when using a proxy. |
 | `ORGANIC_SEARCH`      | `false`                    | Enable search engine navigation before target.     |
 | `SEARCH_KEYWORDS`     | -                          | Comma-separated list for organic search.           |
 | `REFERRER_POOL`       | -                          | Comma-separated custom referrers.                  |
@@ -164,7 +197,7 @@ _Note: Integration tests satisfy system-level dependencies for running a real br
 
 ## Distributed Architecture & Scaling
 
-V2.1.0 supports massive horizontal scaling across multiple nodes using a centralized **Redis** task queue.
+Distributed execution uses a centralized **Redis** task queue with separate producers and workers.
 
 ### Roles:
 
@@ -177,13 +210,13 @@ Producer exits after enqueueing; worker remains a service. All distributed roles
 
 ### Deployment Scaling:
 
-1. **Infrastructure**: Deploy one Redis instance (standard in `docker compose.yml`).
+1. **Infrastructure**: Deploy one Redis instance (standard in `docker-compose.yml`).
 2. **Producers**: Deploy one instance with `BOT_ROLE=producer`.
 3. **Workers**: Deploy as many instances as needed with `BOT_ROLE=worker`. Each worker will pull tasks from the shared queue according to its `MAX_SESSIONS` capacity.
 
 ## Stealth & Anonymity
 
-The bot implements multiple layers of protection to bypass advanced detection:
+The browser engine includes fingerprint modification and interaction simulation. These features do not guarantee anonymity or bypass of detection systems:
 
 1.  **Diamond Standard Hardening**:
     - **AudioContext Masking**: Injects noise into audio frequency data to neutralize hardware-level identification.
@@ -215,7 +248,7 @@ The Veneno Traffic Bot follows a modular, decoupled architecture:
 
 ## Security Features
 
-- **Diamond Standard Hardening**: Sophisticated masking of JS fingerprints (Canvas, WebGL, Audio, Fonts).
+- **Browser protections**: Chromium sandbox, web security, and site isolation remain enabled.
 - **Environment Validation**: Fail-fast configuration with Zod.
 - **Resource Management**: Structured logging and graceful error handling.
 - **Contextual Intelligence**: DOM-aware weighted link prioritization.
@@ -233,7 +266,7 @@ Navigation compares parsed origins (scheme, hostname, effective port). Same-orig
 
 Compose forwards `.env` to the bot; fixed container settings override Redis address, profile directory, production mode, and disable local fallback. Use a recent Compose supporting optional `env_file` entries. Redis, proxy, and management ports are not published. Redis uses an AOF volume; profiles and logs have persistent volumes. The container runs as the unprivileged `node` user. Chrome's sandbox needs kernel/container support: Compose supplies `SYS_ADMIN` as described in [Puppeteer's Docker guidance](https://pptr.dev/guides/docker). If this capability is not acceptable, use a compatible sandbox runtime; do not add `--no-sandbox`. Docker targets Linux amd64 (emulated on Apple Silicon).
 
-Readiness is HTTP on container loopback `HEALTH_PORT` (3000): 503 during startup/shutdown or Redis outages, 200 when the configured execution role is ready. It checks service/queue readiness, not external website health. Producer and local modes exit normally on completion and are not restart loops. Worker/both can be restarted by an operator's service policy. Compose waits for Redis health before starting the bot. Optional management access must use an explicit loopback binding with operator-supplied authentication; no management UI ships by default.
+Readiness is HTTP on container loopback `HEALTH_PORT` (3000): 503 during startup or Redis outages, and 200 when the configured execution role is ready. The listener closes during shutdown, so probes may receive a connection failure. It checks service/queue readiness, not external website health. Producer and local modes exit normally on completion and are not restart loops. Worker/both can be restarted by an operator's service policy. Compose waits for Redis health before starting the bot. Optional management access must use an explicit loopback binding with operator-supplied authentication; no management UI ships by default.
 
 ```bash
 npm ci
@@ -251,9 +284,19 @@ docker stop trafficbot-test-redis
 docker build --no-cache --platform linux/amd64 -t trafficbot:test .
 ```
 
-Browser tests use only a controlled local HTTP server. Browser/Redis/process suites are explicitly skipped in the default unit run; their dedicated commands fail on missing infrastructure, rather than converting setup failures to passes. CI runs all three integration suites. Legacy fingerprint/search demo scripts may contact external sites and are not verification gates. Use them only intentionally against authorized targets.
+Browser tests use only a controlled local HTTP server. Browser/Redis/process suites are explicitly skipped in the default unit run; their dedicated commands fail on missing infrastructure, rather than converting setup failures to passes. CI runs all three integration suites; browser and process-lifecycle tests execute inside the built container as the `node` user with the browser sandbox enabled. Legacy fingerprint/search demo scripts may contact external sites and are not verification gates. Use them only intentionally against authorized targets.
 
-Generated profiles, dependencies, logs, and environment files must not be committed; the lockfile must be tracked. `check:artifacts` runs in CI. See [AUDIT.md](AUDIT.md) for the audit findings, dependency exposure, and verification evidence. Historical tracked profile data remains in Git history; removing it from the index does not erase prior exposure.
+Generated profiles, dependencies, logs, and environment files must not be committed; the lockfile must be tracked. `check:artifacts` runs in CI. Historical tracked profile data remains in Git history; removing it from the index does not erase prior exposure.
+
+## Dependency audit
+
+```bash
+npm audit --omit=dev
+```
+
+The latest project audit on 2026-09-25 reported four high-severity package findings in the Puppeteer/archive-extraction dependency chain. This is a production dependency exposure during browser provisioning, even though ordinary sessions do not extract browser archives. Compatible updates were applied; the proposed Puppeteer 25 migration still requires CommonJS/Jest and plugin compatibility work.
+
+CI saves the current report as the `runtime-dependency-audit` artifact. Its audit step uses `continue-on-error: true`: npm can return exit code 1 for vulnerabilities while the overall workflow passes. A green workflow therefore does not mean the dependency audit is clean. Inspect the uploaded report for the findings from that specific run; their number can change as advisories are updated.
 
 ## License
 
