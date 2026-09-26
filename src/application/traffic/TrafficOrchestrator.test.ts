@@ -41,14 +41,14 @@ test('preserves original failure even when cleanup fails and counts only once', 
   expect(after.activeSessions).toBe(before.activeSessions);
   expect(after.lastFailureKind).toBe('http');
 });
-test('cleanup failure is a single failed session', async () => {
+test('cleanup failure does not fail a successful session', async () => {
   const engine = mockEngine();
   engine.close.mockRejectedValue(new Error('cleanup'));
   const before = MetricsService.getInstance().getMetrics();
-  await expect(new TrafficOrchestrator(engine).run(session)).rejects.toThrow('cleanup');
+  await new TrafficOrchestrator(engine).run(session); // Should not throw
   const after = MetricsService.getInstance().getMetrics();
-  expect(after.successfulSessions).toBe(before.successfulSessions);
-  expect(after.failedSessions - before.failedSessions).toBe(1);
+  expect(after.successfulSessions - before.successfulSessions).toBe(1);
+  expect(after.failedSessions).toBe(before.failedSessions);
 });
 test('successful navigation records status and destination', async () => {
   await new TrafficOrchestrator(mockEngine()).run(session);
