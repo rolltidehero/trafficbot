@@ -1,5 +1,8 @@
-import puppeteer from 'puppeteer';
+import puppeteerExtra from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Browser, Page, LaunchOptions } from 'puppeteer';
+
+puppeteerExtra.use(StealthPlugin());
 import { BrowserEngine, BrowserOptions } from '../../domain/interfaces/BrowserEngine';
 import { sameOrigin } from '../../domain/entities/SessionContract';
 import { logger } from '../logging/logger';
@@ -66,7 +69,7 @@ export class PuppeteerStealthEngine implements BrowserEngine {
       launchOptions.userDataDir = options.userDataDir;
     }
 
-    this.launching = puppeteer.launch(launchOptions);
+    this.launching = puppeteerExtra.launch(launchOptions as any);
     this.browser = await this.launching;
     if (this.cancelled) { await this.close(); throw new Error('Session cancelled during launch'); }
     // Puppeteer's explicit initial about:blank prevents Chrome from restoring a
@@ -105,7 +108,7 @@ export class PuppeteerStealthEngine implements BrowserEngine {
       if (request.isNavigationRequest() && request.frame() === this.page?.mainFrame()) {
         const url = request.url();
         if (this.allowedOrigin && !sameOrigin(url, this.allowedOrigin) && !this.searchOrigins.some(origin => sameOrigin(url, origin))) {
-          this.scopeError = new Error('Navigation blocked: destination outside configured origin');
+          this.scopeError = new Error(`Navigation blocked: destination outside configured origin (url=${url})`);
           void request.abort().catch(() => undefined);
           return;
         }

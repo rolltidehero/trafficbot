@@ -130,7 +130,12 @@ export class TrafficOrchestrator {
             value: targetValue 
           });
           // Fallback: Navigate directly but keep referer if possible
-          await this.engine.setExtraHeaders({ 'Referer': searchUrl });
+          let safeReferer = searchUrl;
+          try {
+            const parsedUrl = new URL(searchUrl);
+            safeReferer = parsedUrl.origin + '/';
+          } catch {}
+          await this.engine.setExtraHeaders({ 'Referer': safeReferer });
           await this.engine.navigate(config.url);
         }
       } else {
