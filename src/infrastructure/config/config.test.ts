@@ -28,6 +28,13 @@ describe('Production configuration and payload contract', () => {
     expect(parseConfig({ PROXY_URL: 'https://proxy', PROXY_PORT: '443' }).PROXY_PORT).toBe(443);
     expect(proxyServer({ host: 'socks5://proxy', port: 9050 })).toBe('socks5://proxy:9050');
   });
+  test('geography matching requires proxy lookup and explicit permission policy', () => {
+    expect(() => parseConfig({ MATCH_GEOLOCATION: 'true' })).toThrow();
+    expect(() => parseConfig({ GRANT_GEOLOCATION: 'true' })).toThrow();
+    expect(parseConfig({ MATCH_GEOLOCATION: 'true', PROXY_LOCATION_URL: 'https://lookup.example/location', PROXY_URL: 'proxy', PROXY_PORT: '8080' }))
+      .toMatchObject({ MATCH_GEOLOCATION: true, GRANT_GEOLOCATION: false, BROWSER_PROFILE: 'native' });
+    expect(parseConfig({ BOT_ROLE: 'worker', MATCH_GEOLOCATION: 'true', PROXY_LOCATION_URL: 'https://lookup.example/location' }).MATCH_GEOLOCATION).toBe(true);
+  });
   test('rejects malformed queue payloads and traversal', () => {
     const valid = { url: 'http://localhost/', durationMinutes: 0.1, intensity: 'low', persistent: true, profileKey: 'profile-1' };
     expect(sessionJobSchema.parse(valid)).toEqual(valid);

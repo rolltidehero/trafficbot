@@ -18,7 +18,6 @@ RUN apt-get update \
     && mkdir -p /app/sessions /app/logs \
     && chown node:node /app/sessions /app/logs
 COPY --from=builder --chown=node:node /app/dist ./dist
-COPY --chown=node:node useragent ./useragent
 USER node
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.HEALTH_PORT||3000),r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"

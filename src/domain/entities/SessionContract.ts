@@ -29,6 +29,7 @@ export const sessionJobSchema = z.object({
   proxy: proxySchema.optional(),
   persistent: z.boolean().default(false),
   profileKey: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
+  deviceProfile: z.string().regex(/^[a-z0-9-]+$/).optional(),
 }).strict().refine(data => !data.persistent || !!data.profileKey, 'Persistent sessions require a profile key');
 export type TrafficJobData = z.infer<typeof sessionJobSchema>;
 export function proxyServer(proxy: z.infer<typeof proxySchema>): string {

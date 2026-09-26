@@ -1,6 +1,6 @@
 # Veneno Traffic Bot v2
 
-Enterprise-grade stealth traffic generation framework.
+Browser session automation with persistent, internally consistent browser profiles.
 
 ## Quick Start (Docker)
 
@@ -193,7 +193,10 @@ _Browser integration tests require an installed browser and its system libraries
 | `ORGANIC_SEARCH`      | `false`                    | Enable search engine navigation before target.     |
 | `SEARCH_KEYWORDS`     | -                          | Comma-separated list for organic search.           |
 | `REFERRER_POOL`       | -                          | Comma-separated custom referrers.                  |
-| `MATCH_GEOLOCATION`   | `false`                    | Unsupported; true fails validation instead of measuring the host.            |
+| `MATCH_GEOLOCATION`   | `false`                    | Align locale/timezone using a validated lookup through the configured browser proxy. |
+| `BROWSER_PROFILE` | `native` | Chrome preset on the actual host OS; see browser profile documentation. |
+| `PROXY_LOCATION_URL` | - | HTTPS JSON country/timezone endpoint, requested through the browser proxy when matching is enabled. |
+| `GRANT_GEOLOCATION` | `false` | Grant only the configured target access to coordinates returned by the proxy lookup. Requires matching. |
 
 ## Distributed Architecture & Scaling
 
@@ -214,21 +217,15 @@ Producer exits after enqueueing; worker remains a service. All distributed roles
 2. **Producers**: Deploy one instance with `BOT_ROLE=producer`.
 3. **Workers**: Deploy as many instances as needed with `BOT_ROLE=worker`. Each worker will pull tasks from the shared queue according to its `MAX_SESSIONS` capacity.
 
-## Stealth & Anonymity
+## Browser identity
 
-The browser engine includes fingerprint modification and interaction simulation. These features do not guarantee anonymity or bypass of detection systems:
+Every session uses a validated `BrowserProfile`. UA and client hints describe the installed Chrome version and host OS. Viewport, screen, DPR, locale and timezone come from the same profile. Hardware and GPU are observed from Chrome; canvas, audio, fonts and permissions keep native behavior. Independent fingerprint randomness and stealth plugin patches have been removed.
 
-1.  **Diamond Standard Hardening**:
-    - **AudioContext Masking**: Injects noise into audio frequency data to neutralize hardware-level identification.
-    - **Font & ClientRects Masking**: Perturbs font measurement and element geometry to break font-based fingerprinting.
-2.  **Contextual Behavior & Intelligence**:
-    - **Thinking Heatmaps**: Non-linear, randomized stay durations for each navigation step.
-    - **Weighted Link Selection**: Prioritizes logical navigation targets (About, Products, Pricing) over utility links.
-    - **Reading Simulation**: Realistic static pauses with micro-mouse nudges to mimic human reading patterns.
-3.  **Advanced Fingerprinting**:
-    - **Canvas & WebGL Randomization**: Injects non-destructive noise into canvas data and spoofs GPU vendors/renderers (M1, NVIDIA, Intel).
-    - **Modern User-Agents**: Uses a curated pool of **Chrome 140+ and Edge 140+ (2025/2026)** strings with dynamic version randomization.
-    - **Hardware Spoofing**: Randomizes `deviceMemory`, `hardwareConcurrency`, and `navigator.platform`.
+Persistent sessions save `browser-profile.json` alongside Chrome state, preserving identity across launches. An incompatible host/device or changed proxy geography fails explicitly. Actual browser upgrades update the version fields without replacing user preferences.
+
+The catalog models Chrome, Edge, Firefox, Safari and mobile devices, but the executable adapter currently runs **native desktop Chrome only**. Linux Chrome cannot become macOS Safari or an iPhone through headers. Other native adapters remain future work. Automation remains observable; consistency is not a promise of anonymity or an external detection score.
+
+See [browser profile architecture and audit guide](docs/browser-profiles.md) for presets, proxy matching, signal coverage, limitations, and opt-in BrowserLeaks, AmIUnique, Pixelscan and FingerprintJS commands.
 
 ## Observability & Health
 
@@ -242,7 +239,8 @@ The Veneno Traffic Bot follows a modular, decoupled architecture:
 
 - **Orchestrator**: Manages the session lifecycle and delegates actions to the engine.
 - **Engine**: Handles browser initialization and low-level interactions (Puppeteer-based).
-- **Intelligence Layer**: `BehaviorService` and `FingerprintService` provide the logic for stealth and realism.
+- **Behavior Layer**: `BehaviorService` controls interaction timing and navigation.
+- **Profile Layer**: `browser/profile/` validates browser identity, native capabilities, geography and persistent preferences.
 - **Observability Layer**: `MetricsService` and `ReputationService` provide real-time monitoring.
 - **Queue Layer**: `BullMQ` (Redis-backed) manages distributed tasks across nodes.
 
@@ -294,7 +292,7 @@ Generated profiles, dependencies, logs, and environment files must not be commit
 npm audit --omit=dev
 ```
 
-The latest project audit on 2026-09-25 reported four high-severity package findings in the Puppeteer/archive-extraction dependency chain. This is a production dependency exposure during browser provisioning, even though ordinary sessions do not extract browser archives. Compatible updates were applied; the proposed Puppeteer 25 migration still requires CommonJS/Jest and plugin compatibility work.
+The project audit on 2026-09-25 reported four high-severity package findings in the Puppeteer/archive-extraction dependency chain. This is a production dependency exposure during browser provisioning, even though ordinary sessions do not extract browser archives. Compatible updates were applied; the proposed Puppeteer 25 migration still requires CommonJS/Jest compatibility work. The browser profile update removes the unused stealth plugin dependencies.
 
 CI saves the current report as the `runtime-dependency-audit` artifact. Its audit step uses `continue-on-error: true`: npm can return exit code 1 for vulnerabilities while the overall workflow passes. A green workflow therefore does not mean the dependency audit is clean. Inspect the uploaded report for the findings from that specific run; their number can change as advisories are updated.
 

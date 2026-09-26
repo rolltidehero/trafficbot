@@ -1,9 +1,8 @@
 export interface SessionConfig {
   id: string;
   url: string;
-  userAgent: string;
+  deviceProfile?: string;
   userDataDir?: string;
-  viewport: { width: number; height: number };
   proxy?: {
     server: string;
     username?: string;

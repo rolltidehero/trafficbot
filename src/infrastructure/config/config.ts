@@ -12,6 +12,9 @@ export const ConfigSchema = z.object({
   HEADLESS: z.preprocess((a) => a === 'false' || a === '0' || a === false ? false : true, z.boolean()).default(true),
   PERSISTENT_SESSIONS: z.preprocess((a) => a === 'true' || a === '1' || a === true, z.boolean()).default(false),
   SESSIONS_DATA_DIR: z.string().default('./sessions'),
+  BROWSER_PROFILE: z.string().default('native'),
+  PROXY_LOCATION_URL: httpUrl.optional(),
+  GRANT_GEOLOCATION: z.enum(['true', 'false']).default('false').transform(value => value === 'true'),
   PROXY_URL: z.string().optional(),
   PROXY_PORT: z.coerce.number().int().min(1).max(65535).optional(),
   PROXY_USER: z.string().optional(),
@@ -40,12 +43,14 @@ export const ConfigSchema = z.object({
     if (!proxySchema.safeParse({ host: config.PROXY_URL, port: config.PROXY_PORT, username: config.PROXY_USER, password: config.PROXY_PASS }).success)
       ctx.addIssue({ code: 'custom', message: 'Invalid or incomplete proxy configuration', path: ['PROXY_URL'] });
   }
-  if (config.MATCH_GEOLOCATION)
-    ctx.addIssue({ code: 'custom', message: 'MATCH_GEOLOCATION is unsupported: host telemetry cannot measure proxy geolocation' });
+  if (config.MATCH_GEOLOCATION && (!config.PROXY_LOCATION_URL || (!config.PROXY_URL && config.BOT_ROLE !== 'worker')))
+    ctx.addIssue({ code: 'custom', message: 'MATCH_GEOLOCATION requires PROXY_LOCATION_URL and a proxy (workers may receive the proxy in jobs)' });
+  if (config.GRANT_GEOLOCATION && !config.MATCH_GEOLOCATION)
+    ctx.addIssue({ code: 'custom', message: 'GRANT_GEOLOCATION requires proxy location matching' });
 });
 
 export function parseConfig(env: Record<string, unknown>) {
-  const optionalBlank = new Set(['URL', 'PROXY_URL', 'PROXY_PORT', 'PROXY_USER', 'PROXY_PASS', 'SEARCH_TARGET_VALUE']);
+  const optionalBlank = new Set(['URL', 'PROXY_URL', 'PROXY_PORT', 'PROXY_USER', 'PROXY_PASS', 'SEARCH_TARGET_VALUE', 'PROXY_LOCATION_URL']);
   const normalized = Object.fromEntries(Object.entries(env).filter(([key, value]) => value !== '' || !optionalBlank.has(key)));
   return ConfigSchema.parse({ ...normalized, DEFAULT_URL: normalized.URL || normalized.DEFAULT_URL });
 }

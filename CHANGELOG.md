@@ -1,4 +1,9 @@
-## Unreleased — 2026-09-25
+## Unreleased — 2026-09-26
+
+- Replace independently randomized fingerprints and stealth plugin overrides with validated BrowserProfile values derived from the installed Chrome and native hardware.
+- Add typed device catalogs, coherent UA/client hints, explicit stable-version providers, locale/timezone policy, and optional browser-proxied location lookup.
+- Persist identity alongside Chrome cookies/storage/cache, rejecting incompatible environments or changed proxy geography.
+- Add profile consistency, persistence, proxy transport, rendering, and header tests plus opt-in external fingerprint audit reports. Document native-runtime limitations.
 
 - Separate reproducible package installation from browser provisioning; run Docker as an unprivileged user with writable volumes and role readiness.
 - Await bounded Redis readiness, preserve reconnection, validate queue payloads, retain failed jobs, and propagate session errors after cleanup.

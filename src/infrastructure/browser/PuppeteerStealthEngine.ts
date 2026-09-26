@@ -1,11 +1,11 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import puppeteer from 'puppeteer';
 import { Browser, Page, LaunchOptions } from 'puppeteer';
 import { BrowserEngine, BrowserOptions } from '../../domain/interfaces/BrowserEngine';
 import { sameOrigin } from '../../domain/entities/SessionContract';
 import { logger } from '../logging/logger';
-
-puppeteer.use(StealthPlugin());
+import { BrowserProfile } from './profile/BrowserProfile';
+import { createRuntimeProfile, applyRuntimeProfile } from './profile/RuntimeProfile';
+import { ProxyLocationProvider } from './profile/ProxyLocationProvider';
 
 export class PuppeteerStealthEngine implements BrowserEngine {
   private browser: Browser | null = null;
@@ -13,6 +13,13 @@ export class PuppeteerStealthEngine implements BrowserEngine {
   private launching?: Promise<Browser>;
   private cancelled = false;
   private page: Page | null = null;
+  private profile?: BrowserProfile;
+  private headers: Record<string, string> = {};
+
+  getProfile(): BrowserProfile {
+    if (!this.profile) throw new Error('Browser profile not initialized');
+    return structuredClone(this.profile);
+  }
 
   private allowedOrigin?: string;
   private searchOrigins: string[] = [];
@@ -32,10 +39,11 @@ export class PuppeteerStealthEngine implements BrowserEngine {
   async init(options: BrowserOptions): Promise<void> {
     this.closing = undefined;
     this.cancelled = false;
+    this.profile = undefined;
+    this.headers = {};
     const args = [
       '--window-position=0,0',
       '--no-first-run',
-      '--disable-blink-features=AutomationControlled',
       '--disable-infobars',
       '--hide-scrollbars',
       '--mute-audio',
@@ -49,8 +57,7 @@ export class PuppeteerStealthEngine implements BrowserEngine {
     const launchOptions: LaunchOptions = {
       headless: options.headless !== false,
       args,
-      ignoreDefaultArgs: ['--enable-automation'],
-      defaultViewport: options.viewport || { width: 1280, height: 720 },
+      defaultViewport: { width: 1280, height: 720 }, // Replaced by the validated profile before target navigation.
     };
 
     if (options.userDataDir) {
@@ -62,6 +69,27 @@ export class PuppeteerStealthEngine implements BrowserEngine {
     if (this.cancelled) { await this.close(); throw new Error('Session cancelled during launch'); }
     const pages = await this.browser!.pages();
     this.page = pages.length > 0 ? pages[0] : await this.browser!.newPage();
+
+    if (options.proxy?.username && options.proxy.password) await this.page.authenticate({ username: options.proxy.username, password: options.proxy.password });
+    let location;
+    if (options.proxyLocationEndpoint) {
+      if (!options.proxy) throw new Error('Proxy location matching requires a browser proxy');
+      const locationPage = await this.browser.newPage();
+      try {
+        if (options.proxy.username && options.proxy.password) await locationPage.authenticate({ username: options.proxy.username, password: options.proxy.password });
+        location = await ProxyLocationProvider.resolve(locationPage, options.proxyLocationEndpoint);
+      } finally { await locationPage.close(); }
+    }
+    this.profile = await createRuntimeProfile(this.browser, options.deviceProfile, options.userDataDir, location);
+    await applyRuntimeProfile(this.page, this.profile);
+    this.headers = { 'accept-language': this.profile.acceptLanguage };
+    await this.page.setExtraHTTPHeaders(this.headers);
+    if (options.grantGeolocation) {
+      if (!location || location.latitude === undefined || location.longitude === undefined || !options.allowedOrigin)
+        throw new Error('Geolocation permission requires proxy coordinates and a configured target origin');
+      await this.page.setGeolocation({ latitude: location.latitude, longitude: location.longitude, accuracy: 1000 });
+      await this.browser.defaultBrowserContext().overridePermissions(options.allowedOrigin, ['geolocation']);
+    }
 
     this.allowedOrigin = options.allowedOrigin;
     this.searchOrigins = options.searchOrigins || [];
@@ -89,42 +117,7 @@ export class PuppeteerStealthEngine implements BrowserEngine {
     // Popups are outside the session's controlled navigation path.
     this.page.on('popup', page => { void page?.close(); });
 
-    if (options.userAgent) {
-      await this.page.setUserAgent(options.userAgent);
-      
-      // Reinforce Client Hints (Sec-CH-UA)
-      const chromeMatch = options.userAgent.match(/Chrome\/(\d+)/);
-      if (chromeMatch) {
-        const majorVersion = chromeMatch[1];
-        const isMobile = options.userAgent.includes('Mobile');
-        const platform = options.platform === 'MacIntel' ? 'macOS' : 
-                         options.platform === 'Win32' ? 'Windows' : 'Linux';
-
-        await this.page.setExtraHTTPHeaders({
-          'sec-ch-ua': `"Not(A:Brand";v="99", "Google Chrome";v="${majorVersion}", "Chromium";v="${majorVersion}"`,
-          'sec-ch-ua-mobile': isMobile ? '?1' : '?0',
-          'sec-ch-ua-platform': `"${platform}"`,
-        });
-      }
-    }
-
-    if (options.viewport) {
-      await this.page.setViewport(options.viewport);
-    }
-
-    if (options.proxy?.username && options.proxy?.password) {
-      await this.page.authenticate({
-        username: options.proxy.username,
-        password: options.proxy.password,
-      });
-    }
-
-    if (options.fingerprintScript) await this.page.evaluateOnNewDocument(options.fingerprintScript);
-
-    logger.debug('Puppeteer Stealth initialized with advanced fingerprint', { 
-      userAgent: options.userAgent,
-      platform: options.platform 
-    });
+    logger.debug('Browser initialized with consistent profile', { deviceId: this.profile.deviceId, browserVersion: this.profile.browserVersion });
   }
 
   async navigate(url: string): Promise<void> {
@@ -182,7 +175,11 @@ export class PuppeteerStealthEngine implements BrowserEngine {
 
   async setExtraHeaders(headers: Record<string, string>): Promise<void> {
     if (!this.page) throw new Error('Engine not initialized');
-    await this.page.setExtraHTTPHeaders(headers);
+    for (const [name, value] of Object.entries(headers)) {
+      if (/^(user-agent|accept-language|sec-ch-)/i.test(name)) throw new Error('Identity headers must come from BrowserProfile');
+      this.headers[name.toLowerCase()] = value;
+    }
+    await this.page.setExtraHTTPHeaders(this.headers);
   }
 
   async setGeolocation(latitude: number, longitude: number): Promise<void> {

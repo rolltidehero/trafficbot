@@ -13,6 +13,7 @@
     "setup:linux": "bash scripts/setup-linux.sh",
     "run:examples": "bash scripts/run-examples.sh",
     "test:fingerprint": "ts-node scripts/test-fingerprint.ts",
+    "audit:fingerprint": "ts-node scripts/audit-fingerprint.ts",
     "check:artifacts": "node scripts/check-artifacts.cjs",
     "test:browser": "RUN_BROWSER_TESTS=1 jest --runInBand PuppeteerStealthEngine.test.ts",
     "test:redis": "RUN_REDIS_TESTS=1 jest --runInBand QueueService.integration.test.ts",
@@ -24,8 +25,6 @@
     "ioredis": "^5.10.0",
     "minimist": "^1.2.8",
     "puppeteer": "^24.37.5",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "winston": "^3.10.0",
     "zod": "^3.22.2"
   },

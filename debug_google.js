@@ -1,6 +1,5 @@
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
+const puppeteer = require('puppeteer');
+const { createRuntimeProfile, applyRuntimeProfile } = require('./dist/infrastructure/browser/profile/RuntimeProfile');
 
 (async () => {
   const browser = await puppeteer.launch({ 
@@ -8,7 +7,7 @@ puppeteer.use(StealthPlugin());
     args: []
   });
   const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 800 });
+  await applyRuntimeProfile(page, await createRuntimeProfile(browser));
 
   console.log('Navigating to Google...');
   await page.goto('https://www.google.com/search?q=stokiv');

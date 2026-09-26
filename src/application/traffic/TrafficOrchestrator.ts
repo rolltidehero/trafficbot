@@ -43,16 +43,16 @@ export class TrafficOrchestrator {
       const referrerService = new ReferrerService(logger);
 
       await this.engine.init({
-        userAgent: config.userAgent,
-        viewport: config.viewport,
         proxy: config.proxy,
         userDataDir: config.userDataDir,
         headless: options.headless,
-        platform: options.platform,
-        fingerprintScript: options.fingerprintScript,
+        deviceProfile: config.deviceProfile || Config.BROWSER_PROFILE,
+        proxyLocationEndpoint: Config.MATCH_GEOLOCATION ? Config.PROXY_LOCATION_URL : undefined,
+        grantGeolocation: Config.GRANT_GEOLOCATION,
         allowedOrigin: new URL(config.url).origin,
         searchOrigins: Config.ORGANIC_SEARCH ? ['https://www.google.com', 'https://www.bing.com', 'https://duckduckgo.com'] : []
       });
+      const viewport = this.engine.getProfile().viewport;
 
       // 2. Organic Search or Referrer Spoofing
       if (Config.ORGANIC_SEARCH && Config.SEARCH_KEYWORDS.length > 0) {
@@ -78,7 +78,7 @@ export class TrafficOrchestrator {
           const searchWait = Math.floor(Math.random() * 3000) + 3000; // 3-6 seconds
           const searchStart = Date.now();
           while (Date.now() - searchStart < searchWait) {
-            await BehaviorService.simulateRandomAction(this.engine, config.viewport, { intensity: 'low' });
+            await BehaviorService.simulateRandomAction(this.engine, viewport, { intensity: 'low' });
           }
         } else {
           logger.info('Waiting briefly on search results...');
@@ -165,7 +165,7 @@ export class TrafficOrchestrator {
           while (Date.now() - stepStart < currentStay) {
             await BehaviorService.simulateRandomAction(
               this.engine, 
-              config.viewport, 
+              viewport,
               { intensity: config.intensity || Config.BEHAVIOR_INTENSITY }
             );
           }
@@ -215,14 +215,10 @@ export class TrafficOrchestrator {
     const data = sessionJobSchema.parse(payload);
     const lease = data.persistent ? await acquireProfile(Config.SESSIONS_DATA_DIR, data.profileKey!) : undefined;
     try {
-    const { FingerprintService } = require('../../infrastructure/browser/FingerprintService');
-    const fingerprint = FingerprintService.generate();
-    
     const session = new Session({
       id: jobId,
       url: data.url,
-      userAgent: fingerprint.userAgent,
-      viewport: fingerprint.viewport,
+      deviceProfile: data.deviceProfile,
       durationMs: data.durationMinutes * 60000,
       intensity: data.intensity,
       userDataDir: lease?.path,
@@ -235,8 +231,6 @@ export class TrafficOrchestrator {
 
     await this.run(session, {
       headless: Config.HEADLESS,
-      platform: fingerprint.platform,
-      fingerprintScript: FingerprintService.getInjectionScript(fingerprint)
     });
     } finally { await lease?.release().catch(() => logger.warn('Profile lock release failed')); }
   }

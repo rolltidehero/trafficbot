@@ -9,10 +9,11 @@ function mockEngine() {
     init: jest.fn().mockResolvedValue(undefined), navigate: jest.fn().mockResolvedValue(undefined),
     close: jest.fn().mockResolvedValue(undefined), wait: jest.fn().mockResolvedValue(undefined),
     evaluate: jest.fn().mockResolvedValue(null), setExtraHeaders: jest.fn(),
+    getProfile: jest.fn().mockReturnValue({ viewport: { width: 100, height: 100 } }),
     navigationResult: jest.fn().mockReturnValue({ status: 200, finalUrl: 'http://localhost/' }),
   } as unknown as jest.Mocked<BrowserEngine>;
 }
-const session = new Session({ id: 'test', url: 'http://localhost/', durationMs: 0.01, userAgent: 'test', viewport: { width: 100, height: 100 } });
+const session = new Session({ id: 'test', url: 'http://localhost/', durationMs: 0.01 });
 beforeEach(() => { Config.HUMAN_BEHAVIOR = false; Config.ORGANIC_SEARCH = false; Config.EXTERNAL_IP_CHECK = false; });
 test('preserves original failure even when cleanup fails and counts only once', async () => {
   const engine = mockEngine();

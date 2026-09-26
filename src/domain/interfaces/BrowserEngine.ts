@@ -1,25 +1,24 @@
+import type { BrowserProfile } from '../../infrastructure/browser/profile/BrowserProfile';
+
 export interface BrowserOptions {
+  deviceProfile?: string;
+  proxyLocationEndpoint?: string;
+  grantGeolocation?: boolean;
   allowedOrigin?: string;
   searchOrigins?: string[];
   navigationTimeoutMs?: number;
   headless?: boolean | 'new';
-  userAgent?: string;
   userDataDir?: string;
   proxy?: {
     server: string;
     username?: string;
     password?: string;
   };
-  viewport?: {
-    width: number;
-    height: number;
-  };
-  platform?: string;
-  fingerprintScript?: string;
 }
 
 export interface BrowserEngine {
   init(options: BrowserOptions): Promise<void>;
+  getProfile(): BrowserProfile;
   navigate(url: string): Promise<void>;
   navigationResult(allowFailure?: boolean): { status: number; finalUrl: string };
   wait(ms: number): Promise<void>;
