@@ -202,8 +202,8 @@ export class TrafficOrchestrator {
       });
     } finally {
       try { await this.engine.close(); } catch (cleanupError) {
-        logger.warn('Browser cleanup failed');
-        if (!failed) { failed = true; failure = cleanupError; }
+        logger.warn('Browser cleanup failed', { error: cleanupError });
+        if (!failed) { failure = cleanupError; } // Record the failure but do not mark the session as failed
       } finally {
         MetricsService.getInstance().trackSessionEnd(!failed, Date.now() - startTime, outcome, failure);
       }

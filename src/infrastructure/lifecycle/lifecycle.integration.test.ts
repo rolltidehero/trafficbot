@@ -60,7 +60,7 @@ integration('Process roles and signals', () => {
         }
       })(), 5000, 'Process readiness');
     }
-    return { child, exited, ready };
+    return { child, exited, ready, get output() { return output; } };
   }
   test('producer enqueues a finite batch then exits', async () => {
     const process = await start('producer');
@@ -101,7 +101,9 @@ integration('Process roles and signals', () => {
   });
   test.each(['local', 'both'])('%s finite local batch exits after browser cleanup', async role => {
     const process = await start(role, { REDIS_URL: 'redis://127.0.0.1:1', LOCAL_FALLBACK: 'true', REDIS_READY_TIMEOUT_MS: '200' });
-    expect(await deadline(process.exited, 15000, 'Batch exit')).toBe(0);
+    const exitCode = await deadline(process.exited, 15000, 'Batch exit');
+    if (exitCode !== 0) console.error(`Role ${role} failed with output: ${process.child.exitCode} ${process.child.signalCode} - ` + process.output);
+    expect(exitCode).toBe(0);
   }, 20000);
   test.each(['SIGTERM', 'SIGINT'] as const)('worker handles %s without leaving connections', async signal => {
     const process = await start('worker');
