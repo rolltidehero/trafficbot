@@ -247,7 +247,15 @@ export class TrafficOrchestrator {
       const links = Array.from(document.querySelectorAll("a"))
         .filter(a => {
           const href = a.href;
-          return href && !blacklist.some((b: string) => href.includes(b)) && new URL(href).origin === window.location.origin;
+          if (!href || blacklist.some((b: string) => href.includes(b))) return false;
+          try {
+            const target = new URL(href);
+            const current = new URL(window.location.href);
+            // Exclude same-page hash anchors — page.goto() returns null for them
+            if (target.origin !== current.origin) return false;
+            if (target.pathname === current.pathname && target.search === current.search) return false;
+            return true;
+          } catch { return false; }
         })
         .map(a => {
           const text = (a.innerText || a.title || "").toLowerCase().trim();
