@@ -39,7 +39,7 @@ export async function createRuntimeProfile(browser: Browser, requestedDevice = '
         platform: navigator.platform, locale: navigator.language, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         metadata: await nav.userAgentData?.getHighEntropyValues(['architecture', 'bitness', 'platformVersion', 'model']) };
     });
-    if (native.platform !== base.platform) throw new Error('Native platform is not supported by this device adapter');
+    if (native.platform !== base.platform && !(base.platform === 'Linux x86_64' && native.platform.startsWith('Linux'))) throw new Error(`Native platform is not supported by this device adapter: expected ${base.platform}, got ${native.platform}`);
     let profile = validateProfile({ ...base, source: 'runtime', hardware: native.hardware, gpu: native.gpu,
       screen: { ...base.screen, availWidth: base.screen.width, availHeight: base.screen.height },
       ...LocaleProvider.values(location?.locale || native.locale), timezone: location?.timezone || native.timezone,
