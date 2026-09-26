@@ -2,6 +2,10 @@
   "name": "@lucasveneno/trafficbot",
   "version": "2.0.0",
   "description": "Enterprise-grade stealth traffic generation framework.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucasveneno/trafficbot.git"
+  },
   "main": "dist/main.js",
   "files": [
     "dist"
