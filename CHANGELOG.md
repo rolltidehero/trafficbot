@@ -1,4 +1,8 @@
-## Unreleased — 2026-09-26
+## [2.0.1] - 2026-09-26
+
+- **Publishing & Metadata:** Scope package to `@lucasveneno/trafficbot`, add Github repository link, and set `files` to `dist` for public npm registry release.
+- **Docker Apple Silicon support:** Relax `RuntimeProfile.ts` validation to correctly allow Linux ARM environments to use the `linux-chrome` device adapter under Docker.
+- **Cleanup:** Remove legacy `useragent/` fingerprint folder, debug logs, leftover debugging scripts, and unused files.
 
 - Honor disabled referral simulation: direct sessions no longer inject random external referrers, which caused headed Chrome to block local navigation during live verification.
 - Force persistent Chrome profiles to start with a controlled blank tab while preserving other browser preferences, preventing restored tabs from requesting sites before identity and navigation policy initialization.
