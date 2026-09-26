@@ -42,7 +42,7 @@ run_test() {
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "▶  $name  [port $PORT, timeout ${timeout_sec}s]"
+  echo ">  $name  [port $PORT, timeout ${timeout_sec}s]"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   # Run in subshell: source .env first, then apply overrides
@@ -69,50 +69,50 @@ run_test() {
   if [ $exit_code -eq 143 ] || [ $exit_code -eq 137 ]; then
     # SIGTERM/SIGKILL from our watcher = timeout
     if echo "$output" | grep -q "Session completed successfully"; then
-      echo "✅ PASS (timed out — expected for long-running; sessions ran ok)"
-      PASS=$((PASS+1)); RESULTS+=("✅ $name")
+      echo "PASS (timed out — expected for long-running; sessions ran ok)"
+      PASS=$((PASS+1)); RESULTS+=("PASS: $name")
     else
-      echo "❌ FAIL (timed out, no successful session)"
+      echo "FAIL (timed out, no successful session)"
       echo "$output" | grep -E "error:|Execution failed" | tail -6
-      FAIL=$((FAIL+1)); RESULTS+=("❌ $name (timeout, no sessions)")
+      FAIL=$((FAIL+1)); RESULTS+=("$name (timeout, no sessions)")
     fi
   elif echo "$output" | grep -q "Session completed successfully"; then
-    echo "✅ PASS"
-    PASS=$((PASS+1)); RESULTS+=("✅ $name")
+    echo "PASS"
+    PASS=$((PASS+1)); RESULTS+=("$name")
   elif echo "$output" | grep -qE "wait.*[1-9]|bull:traffic"; then
     # Producer mode: jobs were enqueued (verify via redis)
     local queued
     queued=$(docker exec trafficbot-redis-1 redis-cli LLEN "bull:traffic-sessions:wait" 2>/dev/null || echo 0)
     if [ "$queued" -gt 0 ] 2>/dev/null; then
-      echo "✅ PASS (producer — $queued jobs enqueued)"
-      PASS=$((PASS+1)); RESULTS+=("✅ $name")
+      echo "PASS (producer — $queued jobs enqueued)"
+      PASS=$((PASS+1)); RESULTS+=("$name")
     else
-      echo "❌ FAIL (exit $exit_code — no sessions, no queued jobs)"
+      echo "FAIL (exit $exit_code — no sessions, no queued jobs)"
       echo "$output" | grep -E "error:|Execution failed" | tail -6
-      FAIL=$((FAIL+1)); RESULTS+=("❌ $name (no sessions/jobs)")
+      FAIL=$((FAIL+1)); RESULTS+=("$name (no sessions/jobs)")
     fi
   elif [ $exit_code -eq 0 ]; then
     # Producer exits 0 — check Redis
     local queued
     queued=$(docker exec trafficbot-redis-1 redis-cli LLEN "bull:traffic-sessions:wait" 2>/dev/null || echo 0)
     if [ "$queued" -gt 0 ] 2>/dev/null; then
-      echo "✅ PASS (producer — $queued jobs enqueued)"
-      PASS=$((PASS+1)); RESULTS+=("✅ $name")
+      echo "PASS (producer — $queued jobs enqueued)"
+      PASS=$((PASS+1)); RESULTS+=("$name")
     else
-      echo "❌ FAIL (exit 0 but no successful session or jobs found)"
+      echo "FAIL (exit 0 but no successful session or jobs found)"
       echo "$output" | grep -E "error:|warn:" | tail -6
-      FAIL=$((FAIL+1)); RESULTS+=("❌ $name (exit 0, nothing ran)")
+      FAIL=$((FAIL+1)); RESULTS+=("$name (exit 0, nothing ran)")
     fi
   else
-    echo "❌ FAIL (exit $exit_code)"
+    echo "FAIL (exit $exit_code)"
     echo "$output" | grep -E "error:|Execution failed" | tail -6
-    FAIL=$((FAIL+1)); RESULTS+=("❌ $name (exit $exit_code)")
+    FAIL=$((FAIL+1)); RESULTS+=("$name (exit $exit_code)")
   fi
 }
 
 skip_test() {
-  echo ""; echo "⏭  SKIP: $1 ($2)"
-  SKIP=$((SKIP+1)); RESULTS+=("⏭ $1 (skipped: $2)")
+  echo ""; echo "SKIP: $1 ($2)"
+  SKIP=$((SKIP+1)); RESULTS+=("SKIP: $1 (skipped: $2)")
 }
 
 # ─── Build ────────────────────────────────────────────────────────────────────
