@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { BrowserProfileGenerator } from './BrowserProfileGenerator';
@@ -82,6 +82,28 @@ test('persistent identity roundtrips and corrupt identity fails closed', async (
     expect(await ProfileStore.read(root)).toEqual(profile);
     await writeFile(join(root, 'browser-profile.json'), '{invalid');
     await expect(ProfileStore.read(root)).rejects.toThrow('invalid');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+test('Chrome preference preparation preserves settings and disables startup restore', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'trafficbot-chrome-prefs-'));
+  try {
+    await writeFile(join(root, 'seed'), 'unrelated');
+    await ProfileStore.prepareChromePreferences(root);
+    const path = join(root, 'Default', 'Preferences');
+    let preferences = JSON.parse(await (await import('fs/promises')).readFile(path, 'utf8'));
+    expect(preferences.session.restore_on_startup).toBe(5);
+    preferences = { ...preferences, browser: { custom: true }, session: { restore_on_startup: 1, startup_urls: ['https://example.test/'] } };
+    await writeFile(path, JSON.stringify(preferences));
+    await mkdir(join(root, 'Default', 'Sessions'));
+    await writeFile(join(root, 'Default', 'Sessions', 'Session_123'), 'session');
+    await writeFile(join(root, 'Default', 'Sessions', 'Tabs_123'), 'tabs');
+    await writeFile(join(root, 'Default', 'Sessions', 'unrelated'), 'keep');
+    await ProfileStore.prepareChromePreferences(root);
+    preferences = JSON.parse(await (await import('fs/promises')).readFile(path, 'utf8'));
+    expect(preferences).toMatchObject({ browser: { custom: true }, session: { restore_on_startup: 5, startup_urls: ['https://example.test/'] } });
+    expect(await readdir(join(root, 'Default', 'Sessions'))).toEqual(['unrelated']);
+    const archives = await readdir(join(root, 'Default', 'Trafficbot Session Archive'));
+    expect(await readdir(join(root, 'Default', 'Trafficbot Session Archive', archives[0]))).toEqual(['0-Session_123', '1-Tabs_123']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 test('runtime upgrades preserve preferences and reject changed native hardware or proxy geography', () => {

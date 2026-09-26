@@ -6,6 +6,7 @@ import { logger } from '../logging/logger';
 import { BrowserProfile } from './profile/BrowserProfile';
 import { createRuntimeProfile, applyRuntimeProfile } from './profile/RuntimeProfile';
 import { ProxyLocationProvider } from './profile/ProxyLocationProvider';
+import { ProfileStore } from './profile/ProfileStore';
 
 export class PuppeteerStealthEngine implements BrowserEngine {
   private browser: Browser | null = null;
@@ -61,14 +62,17 @@ export class PuppeteerStealthEngine implements BrowserEngine {
     };
 
     if (options.userDataDir) {
+      await ProfileStore.prepareChromePreferences(options.userDataDir);
       launchOptions.userDataDir = options.userDataDir;
     }
 
     this.launching = puppeteer.launch(launchOptions);
     this.browser = await this.launching;
     if (this.cancelled) { await this.close(); throw new Error('Session cancelled during launch'); }
+    // Puppeteer's explicit initial about:blank prevents Chrome from restoring a
+    // previous tab before identity and navigation policy are installed.
     const pages = await this.browser!.pages();
-    this.page = pages.length > 0 ? pages[0] : await this.browser!.newPage();
+    this.page = pages[0] || await this.browser!.newPage();
 
     if (options.proxy?.username && options.proxy.password) await this.page.authenticate({ username: options.proxy.username, password: options.proxy.password });
     let location;

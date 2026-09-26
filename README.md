@@ -193,6 +193,7 @@ _Browser integration tests require an installed browser and its system libraries
 | `ORGANIC_SEARCH`      | `false`                    | Enable search engine navigation before target.     |
 | `SEARCH_KEYWORDS`     | -                          | Comma-separated list for organic search.           |
 | `REFERRER_POOL`       | -                          | Comma-separated custom referrers.                  |
+| `REFERRALS` | `no` | Set `yes` to use the built-in referrer pool. A nonempty custom pool also enables referral simulation. Direct sessions otherwise send no synthetic referrer. |
 | `MATCH_GEOLOCATION`   | `false`                    | Align locale/timezone using a validated lookup through the configured browser proxy. |
 | `BROWSER_PROFILE` | `native` | Chrome preset on the actual host OS; see browser profile documentation. |
 | `PROXY_LOCATION_URL` | - | HTTPS JSON country/timezone endpoint, requested through the browser proxy when matching is enabled. |

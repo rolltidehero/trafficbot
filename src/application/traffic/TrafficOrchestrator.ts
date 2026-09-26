@@ -134,7 +134,9 @@ export class TrafficOrchestrator {
           await this.engine.navigate(config.url);
         }
       } else {
-        const referrer = referrerService.getRandomReferrer(Config.REFERRER_POOL);
+        const referrer = Config.REFERRALS === 'yes' || Config.REFERRER_POOL.length > 0
+          ? referrerService.getRandomReferrer(Config.REFERRER_POOL)
+          : undefined;
         if (referrer) {
           logger.info(`Spoofing Referrer`, { referrer });
           await this.engine.setExtraHeaders({ 'Referer': referrer });
@@ -144,7 +146,8 @@ export class TrafficOrchestrator {
       
       // Execute 4 steps with randomized "Thinking Heatmaps" (non-linear stay times)
       const numSteps = 4;
-      const totalLoopTime = Math.floor(config.durationMs * 0.8); // Reserve 20% for overhead/final wait
+      const sessionDeadline = startTime + config.durationMs;
+      const totalLoopTime = Math.min(Math.floor(config.durationMs * 0.8), Math.max(0, sessionDeadline - Date.now()));
       
       // Generate randomized stay durations that sum to totalLoopTime
       const stayWeights = Array.from({ length: numSteps }, () => Math.random() + 0.5);
@@ -162,18 +165,19 @@ export class TrafficOrchestrator {
         
         if (Config.HUMAN_BEHAVIOR) {
           const stepStart = Date.now();
-          while (Date.now() - stepStart < currentStay) {
+          const stepDeadline = Math.min(stepStart + currentStay, sessionDeadline);
+          while (Date.now() < stepDeadline) {
             await BehaviorService.simulateRandomAction(
               this.engine, 
               viewport,
-              { intensity: config.intensity || Config.BEHAVIOR_INTENSITY }
+              { intensity: config.intensity || Config.BEHAVIOR_INTENSITY, deadlineMs: stepDeadline }
             );
           }
         } else {
           await this.engine.wait(currentStay);
         }
 
-        await this.performContextualClick();
+        if (Date.now() < sessionDeadline) await this.performContextualClick();
       }
 
       // Final wait to ensure total session duration matches target

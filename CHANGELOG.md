@@ -1,5 +1,9 @@
 ## Unreleased — 2026-09-26
 
+- Honor disabled referral simulation: direct sessions no longer inject random external referrers, which caused headed Chrome to block local navigation during live verification.
+- Force persistent Chrome profiles to start with a controlled blank tab while preserving other browser preferences, preventing restored tabs from requesting sites before identity and navigation policy initialization.
+- Bound reading, scrolling and contextual navigation by the session deadline so short sessions do not substantially overrun their configured duration.
+
 - Replace independently randomized fingerprints and stealth plugin overrides with validated BrowserProfile values derived from the installed Chrome and native hardware.
 - Add typed device catalogs, coherent UA/client hints, explicit stable-version providers, locale/timezone policy, and optional browser-proxied location lookup.
 - Persist identity alongside Chrome cookies/storage/cache, rejecting incompatible environments or changed proxy geography.

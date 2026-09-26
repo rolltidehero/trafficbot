@@ -3,6 +3,7 @@ import { logger } from '../logging/logger';
 
 export interface BehaviorOptions {
   intensity: 'low' | 'medium' | 'high';
+  deadlineMs?: number;
 }
 
 export class BehaviorService {
@@ -14,6 +15,8 @@ export class BehaviorService {
     viewport: { width: number, height: number },
     options: BehaviorOptions
   ): Promise<void> {
+    const remaining = () => options.deadlineMs === undefined ? Number.POSITIVE_INFINITY : Math.max(0, options.deadlineMs - Date.now());
+    if (remaining() <= 0) return;
     const rand = Math.random();
     
     // Adjust probability based on intensity
@@ -24,13 +27,13 @@ export class BehaviorService {
         : { scroll: 0.1, move: 0.2, pause: 0.7 };
 
     if (rand < thresholds.scroll) {
-      await this.simulateScroll(engine);
+      await this.simulateScroll(engine, options.deadlineMs);
     } else if (rand < thresholds.move) {
       await this.simulateMouseMove(engine, viewport);
     } else if (rand < thresholds.pause) {
       // Simulate "Reading" - long pause with micro-jitters
       logger.debug('Simulating reading pause...');
-      const pauseDuration = Math.floor(Math.random() * 3000) + 2000;
+      const pauseDuration = Math.min(Math.floor(Math.random() * 3000) + 2000, remaining());
       const start = Date.now();
       while (Date.now() - start < pauseDuration) {
         // Occasional tiny mouse nudge while reading
@@ -39,15 +42,18 @@ export class BehaviorService {
           const nudgeY = Math.floor(Math.random() * 10) - 5;
           await engine.mouseMove(viewport.width / 2 + nudgeX, viewport.height / 2 + nudgeY);
         }
-        await engine.wait(500);
+        const wait = Math.min(500, remaining(), pauseDuration - (Date.now() - start));
+        if (wait <= 0) break;
+        await engine.wait(wait);
       }
     } else {
       // Micro-wait
-      await engine.wait(Math.floor(Math.random() * 500) + 100);
+      const wait = Math.min(Math.floor(Math.random() * 500) + 100, remaining());
+      if (wait > 0) await engine.wait(wait);
     }
   }
 
-  private static async simulateScroll(engine: BrowserEngine): Promise<void> {
+  private static async simulateScroll(engine: BrowserEngine, deadlineMs?: number): Promise<void> {
     const direction = Math.random() > 0.3 ? 1 : -1; // Mostly scroll down
     const distance = Math.floor(Math.random() * 400) + 100;
     logger.debug(`Simulating scroll: ${direction * distance}px`);
@@ -56,8 +62,10 @@ export class BehaviorService {
     const steps = 5;
     const stepDistance = Math.floor(distance / steps);
     for (let i = 0; i < steps; i++) {
+      const remaining = deadlineMs === undefined ? Number.POSITIVE_INFINITY : deadlineMs - Date.now();
+      if (remaining <= 0) break;
       await engine.scroll(0, direction * stepDistance);
-      await engine.wait(Math.floor(Math.random() * 50) + 20);
+      await engine.wait(Math.min(Math.floor(Math.random() * 50) + 20, remaining));
     }
   }
 

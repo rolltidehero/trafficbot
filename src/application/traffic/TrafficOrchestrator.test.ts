@@ -14,7 +14,19 @@ function mockEngine() {
   } as unknown as jest.Mocked<BrowserEngine>;
 }
 const session = new Session({ id: 'test', url: 'http://localhost/', durationMs: 0.01 });
-beforeEach(() => { Config.HUMAN_BEHAVIOR = false; Config.ORGANIC_SEARCH = false; Config.EXTERNAL_IP_CHECK = false; });
+beforeEach(() => { Config.HUMAN_BEHAVIOR = false; Config.ORGANIC_SEARCH = false; Config.EXTERNAL_IP_CHECK = false; Config.REFERRALS = 'no'; Config.REFERRER_POOL = []; });
+test('direct sessions do not inject a referrer when referrals are disabled', async () => {
+  const engine = mockEngine();
+  await new TrafficOrchestrator(engine).run(session);
+  expect(engine.setExtraHeaders).not.toHaveBeenCalled();
+});
+test.each(['defaults', 'custom'])('explicit %s referrer configuration is honored', async kind => {
+  if (kind === 'defaults') Config.REFERRALS = 'yes';
+  else Config.REFERRER_POOL = ['http://localhost/source'];
+  const engine = mockEngine();
+  await new TrafficOrchestrator(engine).run(session);
+  expect(engine.setExtraHeaders).toHaveBeenCalledWith({ Referer: kind === 'custom' ? 'http://localhost/source' : expect.any(String) });
+});
 test('preserves original failure even when cleanup fails and counts only once', async () => {
   const engine = mockEngine();
   const original = new Error('HTTP failure: 503');

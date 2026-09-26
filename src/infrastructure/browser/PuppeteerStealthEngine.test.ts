@@ -2,7 +2,7 @@ import { createServer, Server } from 'http';
 import { AddressInfo } from 'net';
 import { PuppeteerStealthEngine } from './PuppeteerStealthEngine';
 import { auditBrowser } from './profile/ProfileAudit';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { acquireProfile } from './ProfileLease';
@@ -16,8 +16,10 @@ browserTests('Real sandboxed browser against controlled local HTTP server', () =
   let origin: string;
   let engine: PuppeteerStealthEngine;
   let escapedRequests = 0;
+  let startupRequests = 0;
   beforeAll(async () => {
     server = createServer((req, res) => {
+      if (req.url === '/startup-canary') startupRequests++;
       if (req.url === '/headers') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(req.headers)); return; }
       if (req.url === '/slow') return;
       if (req.url === '/error') { res.writeHead(500).end('failure'); return; }
@@ -59,17 +61,31 @@ browserTests('Real sandboxed browser against controlled local HTTP server', () =
     const root = await mkdtemp(join(tmpdir(), 'trafficbot-real-profile-'));
     let lease = await acquireProfile(root, 'one');
     try {
-      await engine.init({ userDataDir: lease.path, headless: true, allowedOrigin: origin });
+      const headless = process.env.RUN_HEADED_BROWSER_TESTS !== '1';
+      await engine.init({ userDataDir: lease.path, headless, allowedOrigin: origin });
       await engine.navigate(origin + '/ok');
       const first = engine.getProfile();
       await engine.evaluate(() => { localStorage.setItem('profile-test', 'retained'); document.cookie = 'profile_test=retained; Max-Age=3600; Path=/'; });
-      await engine.close(); await lease.release();
+      await engine.close();
+      // Configure a real Chrome startup page; it must not load before profile/scope setup.
+      const preferencesPath = join(lease.path, 'Default', 'Preferences');
+      const preferences = JSON.parse(await readFile(preferencesPath, 'utf8'));
+      preferences.session = { ...preferences.session, restore_on_startup: 4, startup_urls: [origin + '/startup-canary'] };
+      await writeFile(preferencesPath, JSON.stringify(preferences));
+      await lease.release();
       lease = await acquireProfile(root, 'one');
-      await engine.init({ userDataDir: lease.path, headless: true, allowedOrigin: origin });
+      await engine.init({ userDataDir: lease.path, headless, allowedOrigin: origin });
       await engine.navigate(origin + '/ok');
       expect(engine.getProfile()).toEqual(first);
       expect(await engine.evaluate(() => localStorage.getItem('profile-test'))).toBe('retained');
       expect(await engine.evaluate(() => document.cookie)).toContain('profile_test=retained');
+      await engine.navigate(origin + '/headers');
+      const headers = await engine.evaluate(() => JSON.parse(document.body.innerText) as Record<string, string>);
+      expect(headers['sec-ch-ua']).toBe(first.clientHints!.secChUa);
+      expect(startupRequests).toBe(0);
+      await engine.close();
+      const finalPreferences = JSON.parse(await readFile(preferencesPath, 'utf8'));
+      expect(finalPreferences.session.restore_on_startup).toBe(5);
     } finally { await engine.close(); await lease.release(); await rm(root, { recursive: true, force: true }); }
   }, 30000);
   test('HTTP failure', async () => { await expect(engine.navigate(origin + '/error')).rejects.toThrow('HTTP failure: 500'); });
