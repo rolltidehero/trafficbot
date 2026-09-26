@@ -1,6 +1,6 @@
 {
   "name": "@lucasveneno/trafficbot",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Enterprise-grade stealth traffic generation framework.",
   "repository": {
     "type": "git",
